@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equipment Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #dde1e6;
+    --accent: #0b6e69; --accent-text: #ffffff; --user: #e3f1f0; --warn: #8a5300; --warn-bg: #fff4e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111417; --panel: #1a1e23; --text: #e6e9ed; --muted: #9aa4b0; --line: #2c333b;
+            --accent: #3fb8af; --accent-text: #0d1a19; --user: #1f3533; --warn: #ffcf80; --warn-bg: #3a2c12; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { max-width: 820px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+           padding: 14px 0; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input, button, textarea { font: inherit; color: inherit; }
+  .token { width: 160px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+  #log { flex: 1; padding: 16px 0; display: flex; flex-direction: column; gap: 12px; }
+  .msg { padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);
+         white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+  .cites { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .cites a { color: var(--accent); }
+  .slots button, .actions button { margin: 6px 6px 0 0; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { color: var(--warn); background: var(--warn-bg); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+  .confirm { border: 2px solid var(--accent); }
+  form.send { display: flex; gap: 8px; padding: 12px 0 18px; border-top: 1px solid var(--line); position: sticky; bottom: 0; background: var(--bg); }
+  form.send textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; padding: 10px; border-radius: 8px;
+                       border: 1px solid var(--line); background: var(--panel); }
+  .fine { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Equipment Assistant <span class="fine">· demo catalog (fictional)</span></h1>
+    <div class="meta">
+      <span id="role">public</span>
+      <input class="token" id="token" type="password" placeholder="internal token (optional)" autocomplete="off">
+      <button type="button" id="handoff">Talk to staff</button>
+      <button type="button" id="reset">New chat</button>
+    </div>
+  </header>
+  <main id="log" aria-live="polite">
+    <div class="msg">Hello! Ask about equipment, availability, prices or book a demo. · ¡Hola! Pregunta por equipos,
+disponibilidad, precios o agenda una demostración.
+<span class="fine">Equipment questions only — no medical advice.</span></div>
+  </main>
+  <form class="send" id="form">
+    <textarea id="input" placeholder="Type a message · Escribe un mensaje" rows="1" maxlength="2000"></textarea>
+    <button class="primary" id="sendBtn">Send</button>
+  </form>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let sessionId = null, busy = false;
+try { sessionId = sessionStorage.getItem("sid"); } catch (_) {}
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
+function add(node) { $("log").appendChild(node); node.scrollIntoView({ block: "end" }); return node; }
+function saveSid(id) { sessionId = id; try { sessionStorage.setItem("sid", id); } catch (_) {} }
+function headers() {
+  const h = { "Content-Type": "application/json" };
+  const t = $("token").value.trim(); if (t) h.Authorization = "Bearer " + t;
+  return h;
+}
+
+async function send(payload, label) {
+  if (busy) return; busy = true; $("sendBtn").disabled = true;
+  if (label) add(el("div", "msg user", label));
+  const box = add(el("div", "msg"));
+  const text = el("span"); box.appendChild(text);
+  const chips = el("div", "chips"); box.appendChild(chips);
+  let status = null;
+  try {
+    const res = await fetch("/v1/chat", { method: "POST", headers: headers(), body: JSON.stringify({ ...payload, session_id: sessionId }) });
+    if (!res.ok) {
+      const retry = res.headers.get("Retry-After");
+      text.textContent = res.status === 429 ? `Too many messages. Try again in ${retry || "a few"} s.` :
+        res.status === 401 ? "Invalid internal token." : res.status === 409 ? "Please wait or start a new chat." : `Error ${res.status}`;
+      return;
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = (raw.match(/^event: (.*)$/m) || [])[1], data = JSON.parse((raw.match(/^data: (.*)$/m) || [, "{}"])[1]);
+        handle(ev, data, { box, text, chips, setStatus: (s) => { status ??= box.insertBefore(el("div", "status"), box.firstChild); status.textContent = s; } });
+      }
+    }
+    if (status) status.remove();
+  } catch (e) { text.textContent = "Connection error. Please try again."; }
+  finally { busy = false; $("sendBtn").disabled = false; }
+}
+
+function handle(ev, d, ui) {
+  switch (ev) {
+    case "session": saveSid(d.session_id); $("role").textContent = d.role; break;
+    case "status": ui.setStatus(d.state === "warming_up" ? `Starting the assistant… (${d.waited_s || 0}s, first request after idle)` :
+                                d.state === "slot_taken" ? "That slot was just taken." : d.state); break;
+    case "tool": ui.chips.appendChild(el("span", "chip", d.name.replaceAll("_", " "))); break;
+    case "token": ui.text.textContent += d.text; break;
+    case "done": ui.text.textContent = d.text; break;
+    case "citation": {
+      let c = ui.box.querySelector(".cites"); if (!c) c = ui.box.appendChild(el("div", "cites", "Sources: "));
+      const isUrl = /^https?:\/\//.test(d.ref);
+      const item = isUrl ? Object.assign(el("a", null, `[${d.id}] ${d.title}`), { href: d.ref, target: "_blank", rel: "noopener" })
+                         : el("span", null, `[${d.id}] ${d.title}`);
+      c.appendChild(item); c.appendChild(document.createTextNode("  ")); break;
+    }
+    case "slots": {
+      const s = ui.box.appendChild(el("div", "slots"));
+      d.slots.forEach((iso) => {
+        const b = el("button", null, new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }));
+        b.type = "button"; b.onclick = () => send({ message: `I choose ${iso} (${d.appointment_type})` }, b.textContent);
+        s.appendChild(b);
+      }); break;
+    }
+    case "confirm": confirmBox(d); break;
+    case "booking": add(el("div", "msg", `✔ Booked: ${d.appointment_type.replaceAll("_", " ")} · ${new Date(d.slot).toLocaleString()} · ref ${d.id}`)); break;
+    case "error": ui.text.textContent = d.code === "llm_unavailable" ? "The assistant is unavailable right now." : `Error: ${d.code}`; break;
+  }
+}
+
+function confirmBox(d) {
+  const box = add(el("div", "msg confirm"));
+  box.appendChild(el("div", null, "Confirm appointment · Confirmar cita"));
+  box.appendChild(el("div", "fine", d.summary));
+  const lab = el("label", "fine"); const cb = el("input"); cb.type = "checkbox";
+  lab.append(cb, " I accept the privacy notice · Acepto el aviso de privacidad ");
+  if (d.privacy_notice_url) lab.appendChild(Object.assign(el("a", null, "(read)"), { href: d.privacy_notice_url, target: "_blank", rel: "noopener" }));
+  box.appendChild(el("div")).appendChild(lab);
+  const actions = box.appendChild(el("div", "actions"));
+  const ok = el("button", "primary", "Confirm"), no = el("button", null, "Cancel");
+  ok.type = no.type = "button";
+  const finish = (yes) => { ok.disabled = no.disabled = cb.disabled = true;
+    send({ confirm: { pending_id: d.pending_id, confirm: yes, accept_privacy_notice: cb.checked } }, yes ? "Confirm" : "Cancel"); };
+  ok.onclick = () => { if (!cb.checked) { lab.style.color = "var(--warn)"; return; } finish(true); };
+  no.onclick = () => finish(false);
+  actions.append(ok, no);
+}
+
+$("form").onsubmit = (e) => { e.preventDefault(); const m = $("input").value.trim(); if (!m) return; $("input").value = ""; send({ message: m }, m); };
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } });
+$("reset").onclick = () => { try { sessionStorage.removeItem("sid"); } catch (_) {} location.reload(); };
+$("handoff").onclick = async () => {
+  if (!sessionId) return add(el("div", "msg", "Send a message first."));
+  const contact = prompt("Email or phone (optional) · Correo o teléfono (opcional)") || null;
+  const r = await fetch("/v1/handoff", { method: "POST", headers: headers(), body: JSON.stringify({ session_id: sessionId, contact }) });
+  add(el("div", "msg", r.ok ? "A staff member will contact you. · Una persona del equipo te contactará." : "Handoff unavailable right now."));
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+.token*
+
+# internal agent notes and plans (local only)
+internal/
+plans/
+
+# private data (real catalog, chats, private eval)
+data/private/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+
+# models / caches
+.cache/
+models/
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+serve/local.env
+ingest_rejects.jsonl

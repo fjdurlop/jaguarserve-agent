@@ -1,0 +1,7 @@
+# Minimal SearXNG config: JSON output for the agent. secret_key comes from SEARXNG_SECRET.
+use_default_settings: true
+server:
+  limiter: false
+  image_proxy: false
+search:
+  formats: [html, json]

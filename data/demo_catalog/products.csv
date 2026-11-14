@@ -1,0 +1,31 @@
+sku,name,category,manufacturer,summary,price,currency,price_valid_until,price_visibility,stock,stock_location,stock_as_of,visibility
+VM-US-210,SonoLite 210,ultrasound,Veltrion Medical,Portable color Doppler ultrasound for point-of-care exams.,18900.00,USD,2027-06-30,public,4,North warehouse,2026-11-10,public
+VM-US-350,SonoLite 350,ultrasound,Veltrion Medical,Cart-based ultrasound with 4 probe ports for general imaging.,42500.00,USD,2027-06-30,internal,1,Central warehouse,2026-11-10,public
+VM-US-HH1,SonoPocket H1,ultrasound,Veltrion Medical,Handheld wireless ultrasound probe that pairs with a tablet.,4950.00,USD,2027-06-30,public,12,North warehouse,2026-11-10,public
+KI-PM-500,VitaWatch 500,patient monitor,Kestrava Instruments,"Bedside patient monitor with ECG, SpO2, NIBP and temperature.",3150.00,USD,2027-06-30,public,20,North warehouse,2026-11-10,public
+KI-PM-800,VitaWatch 800,patient monitor,Kestrava Instruments,Modular ICU monitor with invasive pressure and EtCO2 modules.,9800.00,USD,2027-06-30,internal,6,Central warehouse,2026-11-10,public
+KI-PO-10,OxiClip 10,pulse oximeter,Kestrava Instruments,Fingertip pulse oximeter for spot checks.,45.00,USD,2027-06-30,public,300,North warehouse,2026-11-10,public
+KI-PO-60,OxiDesk 60,pulse oximeter,Kestrava Instruments,Tabletop pulse oximeter with trend memory and printer.,690.00,USD,2027-06-30,public,25,Central warehouse,2026-11-10,public
+NH-IP-20,FlowSure 20,infusion pump,Norhaven Devices,Volumetric infusion pump with drug library support.,2400.00,USD,2027-06-30,internal,30,North warehouse,2026-11-10,public
+NH-SP-10,FlowSure S10,syringe pump,Norhaven Devices,Syringe pump for 5 to 60 mL syringes.,1750.00,USD,2027-06-30,internal,18,North warehouse,2026-11-10,public
+NH-DF-3,RescueLine AED 3,defibrillator,Norhaven Devices,Automated external defibrillator with voice and CPR coaching.,1490.00,USD,2027-06-30,public,15,Central warehouse,2026-11-10,public
+NH-DF-9,RescueLine Pro 9,defibrillator,Norhaven Devices,Manual and AED defibrillator-monitor with pacing.,11200.00,USD,2027-06-30,internal,3,Central warehouse,2026-11-10,public
+QB-EC-12,CardioTrace 12,ECG,Quillon Biomed,12-lead electrocardiograph with interpretation and A4 printer.,2890.00,USD,2027-06-30,public,9,North warehouse,2026-11-10,public
+QB-EC-3,CardioTrace 3,ECG,Quillon Biomed,Compact 3-channel ECG for clinics.,980.00,USD,2027-06-30,public,14,North warehouse,2026-11-10,public
+QB-SP-1,AirScore 1,spirometer,Quillon Biomed,PC-based spirometer with disposable flow sensors.,1290.00,USD,2027-06-30,public,7,Central warehouse,2026-11-10,public
+QB-VT-40,BreathLine 40,ventilator,Quillon Biomed,ICU ventilator with invasive and non-invasive modes.,24800.00,USD,2027-06-30,internal,2,Central warehouse,2026-11-10,public
+QB-VT-T2,BreathLine T2,ventilator,Quillon Biomed,Transport ventilator for ambulances and intra-hospital transfer.,13900.00,USD,2027-06-30,internal,0,Central warehouse,2026-11-10,public
+VM-XR-M1,RayMove M1,x-ray,Veltrion Medical,Mobile digital X-ray with wireless flat-panel detector.,78000.00,USD,2027-06-30,internal,1,Central warehouse,2026-11-10,public
+VM-ST-23,SteriCycle 23,sterilizer,Veltrion Medical,"Class B tabletop autoclave, 23 L chamber.",5200.00,USD,2027-06-30,public,8,North warehouse,2026-11-10,public
+VM-ST-80,SteriCycle 80,sterilizer,Veltrion Medical,Floor-standing autoclave for central sterile services.,21500.00,USD,2027-06-30,internal,2,Central warehouse,2026-11-10,public
+NH-BD-E5,CareBed E5,hospital bed,Norhaven Devices,Electric hospital bed with 5 functions and side rails.,3600.00,USD,2027-06-30,public,11,North warehouse,2026-11-10,public
+NH-ST-2,TransferGlide 2,stretcher,Norhaven Devices,Hydraulic transport stretcher with radiolucent top.,2950.00,USD,2027-06-30,public,6,North warehouse,2026-11-10,public
+KI-SL-4,LumaSurg 4,surgical light,Kestrava Instruments,Dual-dome LED surgical light.,15800.00,USD,2027-06-30,internal,2,Central warehouse,2026-11-10,public
+KI-SU-30,VacuDrain 30,suction unit,Kestrava Instruments,Portable surgical suction unit.,820.00,USD,2027-06-30,public,16,North warehouse,2026-11-10,public
+QB-CF-12,SpinLab 12,centrifuge,Quillon Biomed,"Benchtop centrifuge for clinical labs, 12 tubes.",1150.00,USD,2027-06-30,public,10,North warehouse,2026-11-10,public
+QB-MS-2,ClearView B2,microscope,Quillon Biomed,Binocular lab microscope with LED illumination.,640.00,USD,2027-06-30,public,22,North warehouse,2026-11-10,public
+NH-EX-1,ExamFlex 1,examination table,Norhaven Devices,Electric examination table with adjustable backrest.,2100.00,USD,2027-06-30,public,5,Central warehouse,2026-11-10,public
+KI-OC-5,AeroPure 5,oxygen concentrator,Kestrava Instruments,"Stationary oxygen concentrator, 5 L/min.",890.00,USD,2027-06-30,public,40,North warehouse,2026-11-10,public
+KI-NB-1,MistAir 1,nebulizer,Kestrava Instruments,Compressor nebulizer for home and clinic use.,85.00,USD,2027-06-30,public,120,North warehouse,2026-11-10,public
+VM-US-9X,SonoLite 9X (preview),ultrasound,Veltrion Medical,Pre-release premium ultrasound; demo units for key accounts only.,96500.00,USD,2027-06-30,internal,1,Central warehouse,2026-11-10,internal
+QB-VT-40R,BreathLine 40 (refurbished),ventilator,Quillon Biomed,"Refurbished ICU ventilator, 12-month warranty.",14700.00,USD,2027-06-30,internal,2,Central warehouse,2026-11-10,internal

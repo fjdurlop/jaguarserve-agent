@@ -1,0 +1,89 @@
+# Local baseline. Default services: db + api. The LLM is expected on the host (serve/serve_llm.sh)
+# unless you start the `gpu` profile. Optional profiles: gpu (vLLM container), search (SearXNG),
+# obs (Prometheus), tools (ingest job).
+#
+#   cp .env.example .env    # set POSTGRES_PASSWORD
+#   docker compose up -d --build
+#   docker compose --profile tools run --rm ingest
+#   open http://localhost:8080
+name: jaguarserve-agent
+
+x-app-env: &app-env
+  STORE: pg
+  DATABASE_URL: postgresql://agent:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/agent
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:8002/v1}
+  LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+  SEARCH_PROVIDER: ${SEARCH_PROVIDER:-fake}
+  SEARCH_URL: ${SEARCH_URL:-http://searxng:8080}
+  SEARCH_ALLOW_LIST: ${SEARCH_ALLOW_LIST:-example.org,example.com}
+  SEARCH_API_KEY: ${SEARCH_API_KEY:-}
+  INTERNAL_TOKENS: ${INTERNAL_TOKENS:-}
+  PRIVACY_NOTICE_URL: ${PRIVACY_NOTICE_URL:-}
+  TIMEZONE: ${TIMEZONE:-UTC}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_DB: agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: .
+    environment: *app-env
+    ports: ["127.0.0.1:8080:8080"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: [fastembed:/cache/fastembed]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: unless-stopped
+
+  ingest:
+    profiles: [tools]
+    build: .
+    environment: *app-env
+    volumes: [fastembed:/cache/fastembed]
+    command: ["python", "-m", "ingest", "data/demo_catalog"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  vllm:
+    profiles: [gpu]
+    image: vllm/vllm-openai:${VLLM_TAG:-latest}  # pin a tested tag
+    command: >
+      --model ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ} --quantization awq_marlin
+      --max-model-len ${MAX_MODEL_LEN:-6144} --gpu-memory-utilization ${GPU_MEM_UTIL:-0.75}
+      --enable-auto-tool-choice --tool-call-parser hermes --enable-prefix-caching --port 8002
+    ports: ["127.0.0.1:8002:8002"]
+    volumes: [hf-cache:/root/.cache/huggingface]
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+
+  searxng:
+    profiles: [search]
+    image: searxng/searxng:latest  # pin a tested tag
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET in .env for the search profile}
+    volumes: [./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro]
+
+  prometheus:
+    profiles: [obs]
+    image: prom/prometheus:v2.55.1
+    volumes: [./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["127.0.0.1:9090:9090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+volumes:
+  pgdata:
+  fastembed:
+  hf-cache:

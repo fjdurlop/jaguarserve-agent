@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: agent-api
+    static_configs: [{targets: ["api:8080"]}]
+  - job_name: vllm  # host vLLM; use vllm:8002 with the gpu profile
+    static_configs: [{targets: ["host.docker.internal:8002"]}]
