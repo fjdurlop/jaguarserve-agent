@@ -124,3 +124,13 @@ def test_book_outside_hours_rejected(calendar):
         calendar.validate("demo", calendar.list_slots("demo")[0] - timedelta(days=10))
     with pytest.raises(InvalidBooking):
         calendar.list_slots("massage")
+
+
+def test_unknown_category_is_ignored(store, calendar, web):
+    c = ctx("public", store, calendar, web)
+    out = run("search_catalog", c, query="ultrasonido portátil", category="ultrasonido")
+    assert out["results"] and "ignored" in out["note"]
+    assert run("search_catalog", c, query="portable", category="Ultrasound")["results"][0]["sku"].startswith(
+        "VM-US"
+    )
+    assert len(run("list_products", c, category="ultrasonido")["products"]) > 3
