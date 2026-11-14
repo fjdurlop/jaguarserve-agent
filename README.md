@@ -62,6 +62,24 @@ uv run python -m eval.probe_tools   # tool-calling probe against the running vLL
 uv run python -m eval.run_redteam   # 40 red-team prompts against the running API
 ```
 
+## Branches
+
+Changes cascade one way: `feature → develop → main`.
+
+- **`main`** is the released state. It only takes merges from `develop`, never from a feature branch.
+- **`develop`** is integration. Every feature branch starts from it and goes back into it through a PR.
+- **Feature branches** are short-lived and named for what they do, e.g. `keda-gpu-scaling` or
+  `redteam-first-run`. One topic per branch; tests and `ruff check && ruff format` pass before the PR.
+- **Release:** a PR from `develop` to `main` once develop is tested.
+- **Hotfix:** a fix that lands directly on `main` is merged back into `develop` right away, so the
+  two don't drift.
+
+```
+feature-x ──PR──▶ develop ──release PR──▶ main
+                     ▲                      │
+                     └──── hotfix merge ◀───┘
+```
+
 ## Layout
 
 | Path | What |
