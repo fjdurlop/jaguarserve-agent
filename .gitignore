@@ -33,3 +33,11 @@ models/
 !*.tfvars.example
 serve/local.env
 ingest_rejects.jsonl
+
+# terraform backend config (account-specific) and lambda bundles
+backend.hcl
+*.zip
+.terraform.lock.hcl.bak
+# kube / lab session files
+.kubeconfig*
+deploy/.session*

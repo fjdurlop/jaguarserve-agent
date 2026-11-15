@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent
+description: agent-api (HPA 1-3), vLLM (KEDA 0-3 on Karpenter GPU nodes), Redis, Postgres + pgvector, catalog ingest
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

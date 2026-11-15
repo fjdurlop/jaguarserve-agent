@@ -1,0 +1,41 @@
+{{- if .Values.weightsSync.enabled }}
+{{- $v := .Values.vllm }}
+# One-off: copy the model from the Hugging Face Hub to S3 so vLLM pods load it in-region (make weights).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: weights-sync
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: vllm
+      nodeSelector: {role: system}
+      initContainers:
+        - name: download
+          image: {{ .Values.weightsSync.pythonImage }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              pip install --no-cache-dir -q huggingface_hub &&
+              python -c "from huggingface_hub import snapshot_download as d;
+              d(repo_id='{{ $v.model }}', local_dir='/work/model')"
+          env: [{name: HF_HOME, value: /work/hf}]
+          resources:
+            requests: {cpu: 500m, memory: 512Mi, ephemeral-storage: 25Gi}
+            limits: {memory: 2Gi}
+          volumeMounts: [{name: work, mountPath: /work}]
+      containers:
+        - name: upload
+          image: {{ $v.awsCliImage }}
+          args: ["s3", "sync", "--no-progress", "--exclude", ".cache/*", "/work/model",
+                 "{{ required "vllm.weightsS3Uri is required" $v.weightsS3Uri }}"]
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          volumeMounts: [{name: work, mountPath: /work}]
+      volumes:
+        - {name: work, emptyDir: {sizeLimit: 40Gi}}
+{{- end }}

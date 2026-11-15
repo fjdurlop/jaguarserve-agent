@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api
+  labels: {app: agent-api}
+spec:
+  {{- if not .Values.api.hpa.enabled }}
+  replicas: 1
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}   # surge first: streams finish on the old pod
+  selector:
+    matchLabels: {app: agent-api}
+  template:
+    metadata:
+      labels: {app: agent-api}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      nodeSelector: {role: system}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- include "agent.podSecurity" . | nindent 6 }}
+      initContainers:
+        {{- include "agent.waitForDb" . | nindent 8 }}
+      containers:
+        - name: api
+          image: "{{ required "api.image.repository is required" .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          # Behind the ALB: trust X-Forwarded-For so per-IP rate limits see the client, not the ALB.
+          command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8080",
+                    "--timeout-graceful-shutdown", "{{ sub .Values.api.terminationGracePeriodSeconds 10 }}",
+                    "--proxy-headers", "--forwarded-allow-ips", "*"]
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            {{- include "agent.dbEnv" . | nindent 12 }}
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: LLM_BASE_URL
+              value: http://vllm:8000/v1
+            - name: LLM_MODEL
+              value: {{ .Values.vllm.model | quote }}
+            - name: LLM_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: LLM_API_KEY}}
+            - name: INTERNAL_TOKENS
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: INTERNAL_TOKENS, optional: true}}
+            {{- range $k, $v := .Values.api.env }}
+            {{- if ne $k "EMBEDDING_MODEL" }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          startupProbe:   # first start downloads the embedding model
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: cache, emptyDir: {sizeLimit: 2Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-api
+spec:
+  selector: {app: agent-api}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-api
+spec:
+  maxUnavailable: 1   # with one replica a drain still works; HPA keeps >= 1
+  selector:
+    matchLabels: {app: agent-api}
+{{- if .Values.api.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-api
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: agent-api}
+  minReplicas: {{ .Values.api.hpa.minReplicas }}
+  maxReplicas: {{ .Values.api.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ .Values.api.hpa.cpuUtilization }}}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies: [{type: Pods, value: 1, periodSeconds: 300}]
+{{- end }}
