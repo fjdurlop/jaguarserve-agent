@@ -29,6 +29,7 @@ spec:
         prometheus.io/path: /metrics
     spec:
       serviceAccountName: vllm
+      enableServiceLinks: false             # else k8s injects VLLM_PORT=tcp://... (Service "vllm") and vLLM refuses to start
       nodeSelector: {role: gpu}            # Karpenter NodePool `gpu`
       tolerations:
         - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
