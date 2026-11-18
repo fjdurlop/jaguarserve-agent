@@ -2,7 +2,7 @@
 
 Minimal, production-shaped chatbot agent: a self-hosted LLM with tool calling, retrieval over a product catalog, prices and stock by user role, appointment booking with explicit confirmation, and allow-listed web search. Every factual claim is cited. The target domain is medical-equipment product information (equipment only, no clinical advice).
 
-Status: baseline code for plan phases 1–6, the local compose file, and the EKS deployment code (not yet applied). The plan and cost notes are local only (see below).
+Status: baseline code for plan phases 1–6, the local compose file, and the EKS deployment code (run once end to end in a lab session; see `deploy/KNOWN_ISSUES.md`). The plan and cost notes are local only (see below).
 
 This repository is public. It contains no real company data: the demo catalog in `data/demo_catalog/` is fictional (brands, models, prices, stock).
 
@@ -82,6 +82,9 @@ deploy/lab.sh down          # deletes everything, then lists leftovers
 `deploy/lab.sh token` prints the internal-role token. A public ALB is optional (`enable_alb = true`,
 `ingress.enabled=true`).
 
+Problems seen in real lab sessions (teardown hang, single-GPU rollout, GPU capacity) and their
+workarounds are in [`deploy/KNOWN_ISSUES.md`](deploy/KNOWN_ISSUES.md).
+
 ## Checks
 
 ```bash
@@ -123,6 +126,7 @@ feature-x ──PR──▶ develop ──release PR──▶ main
 | `deploy/terraform/` | `bootstrap` (kept) and `cluster` (per session) stacks: VPC, EKS, Karpenter, add-ons |
 | `deploy/helm/` | `agent` (API, vLLM + KEDA, Redis, Postgres, ingest) and `platform` (GPU NodePool, gp3) |
 | `deploy/lab.sh` | lab lifecycle: bootstrap, up, chat, down, leftovers |
+| `deploy/KNOWN_ISSUES.md` | problems found in lab sessions, workarounds, fix status |
 | `eval/` | tool-calling probe, red-team set and runner |
 | `db/schema.sql` | Postgres schema (applied at startup) |
 | `data/demo_catalog/` | fictional catalog; regenerate with `scripts/make_demo_catalog.py` |
