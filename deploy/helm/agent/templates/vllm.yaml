@@ -16,8 +16,12 @@ spec:
   {{- $live := lookup "apps/v1" "Deployment" .Release.Namespace "vllm" }}
   replicas: {{ if $live }}{{ $live.spec.replicas | default 0 }}{{ else }}0{{ end }}
   strategy:
-    type: RollingUpdate
+    {{- if eq $v.rolloutStrategy "Recreate" }}
+    type: Recreate          # old pod first: frees the GPU when no 2nd GPU can be had (lab)
+    {{- else }}
+    type: RollingUpdate     # new pod Ready before the old goes: no downtime, needs a 2nd GPU
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    {{- end }}
   selector:
     matchLabels: {app: vllm}
   template:

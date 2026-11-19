@@ -93,7 +93,8 @@ cmd_deploy() {
   helm upgrade --install agent "$CHART" -n "$NS" --wait --timeout 20m \
     --set api.image.repository="$(boot_out ecr_repository_url)" \
     --set api.image.tag="$(cat "$ROOT/deploy/.session-image")" \
-    --set vllm.weightsS3Uri="$s3"
+    --set vllm.weightsS3Uri="$s3" \
+    --set vllm.rolloutStrategy=Recreate
 }
 
 cmd_up() {
@@ -158,6 +159,9 @@ cmd_down() {
     kubectl -n "$NS" delete pvc --all --wait --timeout=5m 2>/dev/null || true
     kubectl delete nodepools --all --wait --timeout=10m 2>/dev/null || true
     kubectl wait --for=delete nodeclaims --all --timeout=10m 2>/dev/null || true
+    # While the network is intact: its finalizer needs AWS access (Karpenter has no NAT once
+    # Terraform drops the public route table), else destroy hangs. See deploy/KNOWN_ISSUES.md #2.
+    kubectl delete ec2nodeclasses --all --wait --timeout=5m 2>/dev/null || true
   else
     log "cluster already gone (reaper?): drop in-cluster resources from the state"
     terraform -chdir="$TF_CLUSTER" state list 2>/dev/null | grep -E '^helm_release\.' |

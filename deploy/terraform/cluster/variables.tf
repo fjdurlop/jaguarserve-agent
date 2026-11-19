@@ -32,9 +32,9 @@ variable "system_instance_type" {
 }
 
 variable "gpu_instance_types" {
-  description = "GPU node types Karpenter may launch (one GPU with 24 GB each)"
+  description = "GPU node types Karpenter may launch (one GPU each: L4/A10G 24 GB, g6e L40S 48 GB); cheapest available wins. Wide on purpose: capacity is often short. Mind the spot vCPU quota (a g6.4xlarge has 16 vCPU)."
   type        = list(string)
-  default     = ["g6.xlarge", "g5.xlarge"]
+  default     = ["g6.xlarge", "g5.xlarge", "g6.2xlarge", "g6.4xlarge", "g6e.xlarge"]
 }
 
 variable "gpu_capacity_types" {

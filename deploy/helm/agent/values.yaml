@@ -57,6 +57,7 @@ vllm:
     requests: {cpu: "2", memory: 12Gi, nvidia.com/gpu: 1}
     limits: {memory: 14Gi, nvidia.com/gpu: 1}
   startupMinutes: 25
+  rolloutStrategy: RollingUpdate  # or Recreate (lab.sh sets it: one GPU, see deploy/KNOWN_ISSUES.md #3)
   scaling:
     maxReplicas: 3                  # = Karpenter gpuLimit
     cooldownSeconds: 1800           # to zero 30 min after the last request

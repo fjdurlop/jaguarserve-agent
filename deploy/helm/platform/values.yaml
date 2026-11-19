@@ -1,6 +1,6 @@
 clusterName: ""          # required
 nodeRole: ""             # required: Karpenter node IAM role name
-gpuInstanceTypes: [g6.xlarge, g5.xlarge]
+gpuInstanceTypes: [g6.xlarge, g5.xlarge, g6.2xlarge, g6.4xlarge, g6e.xlarge]  # Terraform overrides
 gpuCapacityTypes: [spot, on-demand]
 gpuLimit: 3              # max GPUs at once (KEDA maxReplicaCount should match)
 consolidateAfter: 5m     # empty GPU node removed this long after its last pod

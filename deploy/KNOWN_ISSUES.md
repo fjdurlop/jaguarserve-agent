@@ -6,9 +6,9 @@ Each entry gives the symptom, the cause, the workaround used, and the fix status
 | # | Issue | Status |
 |---|---|---|
 | 1 | vLLM crash loop: `VLLM_PORT` injected by Kubernetes | fixed in chart |
-| 2 | `lab.sh down` hangs: Karpenter loses AWS access before its finalizer runs | open |
-| 3 | vLLM rollout deadlock with a single GPU | open (decision needed) |
-| 4 | Default GPU instance list too narrow for real capacity | open |
+| 2 | `lab.sh down` hangs: Karpenter loses AWS access before its finalizer runs | fixed in `lab.sh` (not yet tested on a cluster) |
+| 3 | vLLM rollout deadlock with a single GPU | fixed: `Recreate` in lab, rolling update by default |
+| 4 | Default GPU instance list too narrow for real capacity | fixed: wider default |
 | 5 | Expired `public.ecr.aws` Helm login blocks chart pulls | workaround |
 | 6 | No GPU capacity in the region for ~20 min | risk, no fix in code |
 
@@ -42,9 +42,10 @@ cannot uninstall, and anything still holding a public IP keeps the internet gate
 3. Delete the Karpenter instance profile by hand (`aws iam list-instance-profiles`, then
    `remove-role-from-instance-profile` and `delete-instance-profile`) and the EKS log group if it remains.
 
-**Fix (planned).** In `cmd_down`, while the network is still intact, delete the EC2NodeClass and wait
-for it (`kubectl delete ec2nodeclasses --all --wait`) right after the NodeClaims are gone, before
-`terraform destroy`. Alternative: destroy the `helm_release.*` resources first with `-target`, then the rest.
+**Fix.** `cmd_down` now deletes the EC2NodeClass and waits for it
+(`kubectl delete ec2nodeclasses --all --wait`) right after the NodeClaims are gone, while the network is
+still intact, before `terraform destroy`. Not yet run against a real cluster; if it still hangs, the
+fallback is to destroy the `helm_release.*` resources first with `-target`, then the rest.
 
 ## 3. vLLM rollout deadlock with a single GPU
 
@@ -58,8 +59,9 @@ the old pod is already broken (issue 1): nothing serves and nothing progresses.
 
 **Workaround used.** Live patch to `maxSurge: 0, maxUnavailable: 1` (old pod goes first, short outage).
 
-**Fix (decision needed).** Use `type: Recreate` (or `maxSurge: 0`) in lab mode, keep the surge rollout
-for production where a second GPU is available. Likely a chart value, e.g. `vllm.rolloutStrategy`.
+**Fix.** Chart value `vllm.rolloutStrategy`: `RollingUpdate` by default (no downtime, for a setup that
+can get a second GPU), `Recreate` set by `lab.sh` (old pod goes first; chat is down for the vLLM start,
+about 2–3 min with a cached image).
 
 ## 4. Default GPU instance list too narrow for real capacity
 
@@ -70,7 +72,8 @@ for production where a second GPU is available. Likely a chart value, e.g. `vllm
 wider list passed with `-var` (`g6.xlarge, g5.xlarge, g6.2xlarge, g6.4xlarge, g6e.xlarge`): a
 `g6.4xlarge` on-demand.
 
-**Fix (planned).** Make the wider list the default. Keep the quota in mind: the spot G-instance quota
+**Fix.** The wider list is now the default in both places; Karpenter picks the cheapest available
+type. Keep the quota in mind: the spot G-instance quota
 (8 vCPU) does not fit a `g6.4xlarge` (16 vCPU), so that type can only come on demand.
 
 ## 5. Expired `public.ecr.aws` Helm login blocks chart pulls
