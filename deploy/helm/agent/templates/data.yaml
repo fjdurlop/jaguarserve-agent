@@ -1,0 +1,123 @@
+# Redis: sessions + rate limits. No persistence: a restart only restarts open chats (bookings are in Postgres).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: {app: redis}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      nodeSelector: {role: system}
+      securityContext: {runAsNonRoot: true, runAsUser: 999, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "{{ .Values.redis.maxmemory }}",
+                 "--maxmemory-policy", "volatile-lru"]
+          ports: [{name: redis, containerPort: 6379}]
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app: redis}
+  ports: [{name: redis, port: 6379, targetPort: redis}]
+---
+# Postgres + pgvector: catalog, chunks, appointments, feedback. Lab: one pod with a gp3 volume
+# (deleted by `make down`). Production with real users: RDS (O4).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels: {app: postgres}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      nodeSelector: {role: system}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - {name: POSTGRES_USER, value: agent}
+            - {name: POSTGRES_DB, value: agent}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: POSTGRES_PASSWORD}}
+          ports: [{name: pg, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "agent", "-d", "agent"]}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: {{ .Values.postgres.storage }}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports: [{name: pg, port: 5432, targetPort: pg}]
+{{- if .Values.ingest.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: catalog-ingest
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector: {role: system}
+      {{- include "agent.podSecurity" . | nindent 6 }}
+      initContainers:
+        {{- include "agent.waitForDb" . | nindent 8 }}
+      containers:
+        - name: ingest
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          command: ["python", "-m", "ingest", "{{ .Values.ingest.path }}", "--rejects", "/tmp/ingest_rejects.jsonl"]
+          env:
+            {{- include "agent.dbEnv" . | nindent 12 }}
+          resources:
+            requests: {cpu: 250m, memory: 768Mi}
+            limits: {memory: 1536Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          workingDir: /app
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: cache, emptyDir: {sizeLimit: 2Gi}}
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+{{- end }}

@@ -318,15 +318,22 @@ async def _wait_for_llm(deps: Deps) -> AsyncIterator[Any]:
     t0 = time.monotonic()
     deadline = t0 + deps.settings.llm_ready_timeout
     delay = 2.0
-    while time.monotonic() < deadline:
-        await asyncio.sleep(min(delay, max(0.0, deadline - time.monotonic())))
-        if await deps.llm.ready():
-            metrics.LLM_WAIT.observe(time.monotonic() - t0)
-            yield Event("status", {"state": "ready"})
-            yield deps.llm
-            return
-        yield Event("status", {"state": "warming_up", "waited_s": round(time.monotonic() - t0)})
-        delay = min(delay * 1.5, 15.0)
+    ready = False
+    metrics.LLM_WAITING.inc()
+    try:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+            if await deps.llm.ready():
+                ready = True
+                break
+            yield Event("status", {"state": "warming_up", "waited_s": round(time.monotonic() - t0)})
+            delay = min(delay * 1.5, 15.0)
+    finally:
+        metrics.LLM_WAITING.dec()
+    if ready:
+        metrics.LLM_WAIT.observe(time.monotonic() - t0)
+        yield Event("status", {"state": "ready"})
+        yield deps.llm
 
 
 def _pending_from(call_id: str, raw: str, calendar: Calendar) -> tuple[Pending | None, str | None]:

@@ -21,6 +21,7 @@ x-app-env: &app-env
   INTERNAL_TOKENS: ${INTERNAL_TOKENS:-}
   PRIVACY_NOTICE_URL: ${PRIVACY_NOTICE_URL:-}
   TIMEZONE: ${TIMEZONE:-UTC}
+  REDIS_URL: redis://redis:6379/0
 
 services:
   db:
@@ -35,6 +36,15 @@ services:
       interval: 5s
       retries: 20
 
+  redis:  # sessions + rate limits; nothing persisted (a lost session only restarts the chat)
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb",
+              "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
   api:
     build: .
     environment: *app-env
@@ -43,6 +53,7 @@ services:
     volumes: [fastembed:/cache/fastembed]
     depends_on:
       db: {condition: service_healthy}
+      redis: {condition: service_healthy}
     restart: unless-stopped
 
   ingest:

@@ -2,7 +2,7 @@
 
 Minimal, production-shaped chatbot agent: a self-hosted LLM with tool calling, retrieval over a product catalog, prices and stock by user role, appointment booking with explicit confirmation, and allow-listed web search. Every factual claim is cited. The target domain is medical-equipment product information (equipment only, no clinical advice).
 
-Status: baseline code for plan phases 1–6 plus the local compose file. The plan and cost notes are local only (see below).
+Status: baseline code for plan phases 1–6, the local compose file, and the EKS deployment code (run once end to end in a lab session; see `deploy/KNOWN_ISSUES.md`). The plan and cost notes are local only (see below).
 
 This repository is public. It contains no real company data: the demo catalog in `data/demo_catalog/` is fictional (brands, models, prices, stock).
 
@@ -52,6 +52,39 @@ Requirements: Python 3.12, [uv](https://docs.astral.sh/uv/), Docker for the Post
 
 Internal role: set `INTERNAL_TOKENS` and paste a token in the page header. Internal users see internal-only products and prices.
 
+## Deploy on AWS (EKS, scale to zero)
+
+The GPU scales to zero: no vLLM pod and no GPU node while nobody chats. A waiting chat wakes it.
+
+```
+user ─▶ ALB / port-forward ─▶ agent-api (HPA 1–3) ─▶ Redis (sessions) · Postgres (catalog, bookings)
+                                  │ agent_llm_waiting_turns
+                                  ▼
+                              Prometheus ─▶ KEDA ─▶ vLLM pods 0–3 ─▶ Karpenter ─▶ GPU nodes 0–3 (L4)
+```
+
+Lab mode keeps the bill low: the cluster exists only during a work session and is destroyed after.
+A small bootstrap stack stays (state bucket, image registry, model weights, budget alert, and a reaper that
+removes a forgotten cluster after `SESSION_HOURS`). Requirements: Terraform ≥ 1.10, Helm, kubectl, AWS CLI,
+Docker, and G-instance quota in the region.
+
+```bash
+export AWS_PROFILE=<your profile>
+cp deploy/terraform/bootstrap/terraform.tfvars.example deploy/terraform/bootstrap/terraform.tfvars  # budget email
+deploy/lab.sh bootstrap     # once
+deploy/lab.sh up            # ≈ 20 min: cluster, add-ons, image, app
+deploy/lab.sh weights       # once: model weights Hub -> S3, then `deploy/lab.sh redeploy`
+deploy/lab.sh chat          # http://localhost:8080 (long-running port-forward)
+deploy/lab.sh down          # deletes everything, then lists leftovers
+```
+
+`make <target>` wraps the same commands. `deploy/lab.sh status` shows nodes, pods and autoscalers;
+`deploy/lab.sh token` prints the internal-role token. A public ALB is optional (`enable_alb = true`,
+`ingress.enabled=true`).
+
+Problems seen in real lab sessions (teardown hang, single-GPU rollout, GPU capacity) and their
+workarounds are in [`deploy/KNOWN_ISSUES.md`](deploy/KNOWN_ISSUES.md).
+
 ## Checks
 
 ```bash
@@ -60,6 +93,25 @@ uv run pytest                       # offline: fake LLM, in-memory store, fake s
 TEST_DATABASE_URL=postgresql://... uv run pytest -m pg     # Postgres suite (disposable database)
 uv run python -m eval.probe_tools   # tool-calling probe against the running vLLM (20 prompts)
 uv run python -m eval.run_redteam   # 40 red-team prompts against the running API
+make lint-deploy                    # terraform fmt/validate, helm lint (no AWS calls)
+```
+
+## Branches
+
+Changes cascade one way: `feature → develop → main`.
+
+- **`main`** is the released state. It only takes merges from `develop`, never from a feature branch.
+- **`develop`** is integration. Every feature branch starts from it and goes back into it through a PR.
+- **Feature branches** are short-lived and named for what they do, e.g. `keda-gpu-scaling` or
+  `redteam-first-run`. One topic per branch; tests and `ruff check && ruff format` pass before the PR.
+- **Release:** a PR from `develop` to `main` once develop is tested.
+- **Hotfix:** a fix that lands directly on `main` is merged back into `develop` right away, so the
+  two don't drift.
+
+```
+feature-x ──PR──▶ develop ──release PR──▶ main
+                     ▲                      │
+                     └──── hotfix merge ◀───┘
 ```
 
 ## Layout
@@ -71,6 +123,10 @@ uv run python -m eval.run_redteam   # 40 red-team prompts against the running AP
 | `ingest/` | catalog ingestion CLI (`python -m ingest <dir>`) |
 | `web/index.html` | chat page (served at `/`) |
 | `serve/` | vLLM launch script and model profiles A and B |
+| `deploy/terraform/` | `bootstrap` (kept) and `cluster` (per session) stacks: VPC, EKS, Karpenter, add-ons |
+| `deploy/helm/` | `agent` (API, vLLM + KEDA, Redis, Postgres, ingest) and `platform` (GPU NodePool, gp3) |
+| `deploy/lab.sh` | lab lifecycle: bootstrap, up, chat, down, leftovers |
+| `deploy/KNOWN_ISSUES.md` | problems found in lab sessions, workarounds, fix status |
 | `eval/` | tool-calling probe, red-team set and runner |
 | `db/schema.sql` | Postgres schema (applied at startup) |
 | `data/demo_catalog/` | fictional catalog; regenerate with `scripts/make_demo_catalog.py` |

@@ -97,9 +97,19 @@ def _product_or_fail(args: dict, ctx: ToolContext) -> Product:
 
 
 # --- catalog ---------------------------------------------------------------------------------------
+def _known_category(value: str | None, ctx: ToolContext) -> str | None:
+    """Model-supplied category if the catalog has it (any case); else None (search everything).
+    Models often translate or invent category names, and a wrong filter would hide every product."""
+    if not value:
+        return None
+    cats = {p.category.lower() for p in ctx.store.list_products(ctx.role)}
+    return value.lower() if value.lower() in cats else None
+
+
 def search_catalog(args: dict, ctx: ToolContext) -> dict:
     k = min(int(args.get("k", 6)), 8)
-    hits = ctx.store.search(args["query"], ctx.role, k=k * 2, category=args.get("category") or None)
+    category = _known_category(args.get("category"), ctx)
+    hits = ctx.store.search(args["query"], ctx.role, k=k * 2, category=category)
     seen: set[str] = set()
     results = []
     for h in hits:  # one passage per product (es and en sheets would repeat it)
@@ -114,7 +124,10 @@ def search_catalog(args: dict, ctx: ToolContext) -> dict:
                 "text": h.chunk.text[:1200],
             }
         )
-    return {"results": results[:k]}
+    out: dict = {"results": results[:k]}
+    if args.get("category") and category is None:
+        out["note"] = f"unknown category {args['category']!r} ignored; searched all products"
+    return out
 
 
 def get_product(args: dict, ctx: ToolContext) -> dict:
@@ -122,7 +135,7 @@ def get_product(args: dict, ctx: ToolContext) -> dict:
 
 
 def list_products(args: dict, ctx: ToolContext) -> dict:
-    cat = (args.get("category") or "").lower()
+    cat = _known_category(args.get("category"), ctx)
     items = [p for p in ctx.store.list_products(ctx.role) if not cat or p.category.lower() == cat]
     return {
         "products": [{"sku": p.sku, "name": p.name, "category": p.category} for p in items[:40]],

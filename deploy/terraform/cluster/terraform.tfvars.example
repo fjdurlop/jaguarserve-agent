@@ -1,0 +1,6 @@
+# Optional overrides (copy to terraform.tfvars, gitignored). `make up` passes admin_cidrs, expires_at and
+# models_bucket on the command line, so this file can stay empty.
+# region             = "eu-north-1"
+# kubernetes_version = "1.35"
+# gpu_capacity_types = ["on-demand"]
+# enable_alb         = true

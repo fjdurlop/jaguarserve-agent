@@ -1,0 +1,141 @@
+{{- $v := .Values.vllm }}
+{{- $local := ne $v.weightsS3Uri "" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vllm   # pod identity (Terraform) gives it read access to the models bucket
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  labels: {app: vllm}
+spec:
+  # KEDA owns the count (0..maxReplicas). Keep the live value on upgrade so a deploy never stops a
+  # serving GPU (or starts one).
+  {{- $live := lookup "apps/v1" "Deployment" .Release.Namespace "vllm" }}
+  replicas: {{ if $live }}{{ $live.spec.replicas | default 0 }}{{ else }}0{{ end }}
+  strategy:
+    {{- if eq $v.rolloutStrategy "Recreate" }}
+    type: Recreate          # old pod first: frees the GPU when no 2nd GPU can be had (lab)
+    {{- else }}
+    type: RollingUpdate     # new pod Ready before the old goes: no downtime, needs a 2nd GPU
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    {{- end }}
+  selector:
+    matchLabels: {app: vllm}
+  template:
+    metadata:
+      labels: {app: vllm}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: vllm
+      enableServiceLinks: false             # else k8s injects VLLM_PORT=tcp://... (Service "vllm") and vLLM refuses to start
+      nodeSelector: {role: gpu}            # Karpenter NodePool `gpu`
+      tolerations:
+        - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      terminationGracePeriodSeconds: 120
+      {{- if $local }}
+      initContainers:
+        - name: fetch-weights   # same-region S3: ~9 GB in about a minute, no Hub dependency
+          image: {{ $v.awsCliImage }}
+          args: ["s3", "sync", "--no-progress", "{{ $v.weightsS3Uri }}", "/models/current"]
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          volumeMounts: [{name: models, mountPath: /models}]
+      {{- end }}
+      containers:
+        - name: vllm
+          image: {{ $v.image }}
+          args:
+            - --model={{ if $local }}/models/current{{ else }}{{ $v.model }}{{ end }}
+            - --served-model-name={{ $v.model }}
+            - --port=8000
+            {{- range $v.args }}
+            - {{ . }}
+            {{- end }}
+          env:
+            - name: VLLM_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secretName }}, key: LLM_API_KEY}}
+            - {name: HF_HOME, value: /models/hf}
+          ports: [{name: http, containerPort: 8000}]
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: {{ mul $v.startupMinutes 6 }}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources: {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - {name: models, mountPath: /models}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - {name: models, emptyDir: {sizeLimit: 60Gi}}   # node disk; gone with the node
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+spec:
+  selector: {app: vllm}
+  ports: [{name: http, port: 8000, targetPort: http}]
+---
+# Scale 0..max on Prometheus signals (plan_scaling.md "Signals and thresholds").
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm
+spec:
+  scaleTargetRef: {name: vllm}
+  minReplicaCount: 0
+  maxReplicaCount: {{ $v.scaling.maxReplicas }}
+  pollingInterval: 15
+  cooldownPeriod: {{ $v.scaling.cooldownSeconds }}
+  {{- if gt (int $v.scaling.fallbackReplicas) 0 }}
+  fallback: {failureThreshold: 3, replicas: {{ $v.scaling.fallbackReplicas }}}
+  {{- end }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies: [{type: Pods, value: 1, periodSeconds: 60}]
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies: [{type: Pods, value: 1, periodSeconds: 300}]
+  triggers:
+    # Wake from zero: a chat turn is waiting in agent-api. High threshold = activation only (0 -> 1),
+    # so ten users waiting during a cold start do not start ten GPUs.
+    - type: prometheus
+      name: users-waiting
+      metadata:
+        serverAddress: {{ $v.scaling.prometheusUrl }}
+        query: sum(agent_llm_waiting_turns) or vector(0)
+        threshold: "1000"
+        activationThreshold: "0"
+    # Scale out: requests queued inside vLLM (GPU full).
+    - type: prometheus
+      name: queue
+      metadata:
+        serverAddress: {{ $v.scaling.prometheusUrl }}
+        query: sum(vllm:num_requests_waiting) or vector(0)
+        threshold: {{ $v.scaling.waitingPerReplica | quote }}
+        activationThreshold: "0"
+    # Load: requests being generated; also keeps the replica alive while anyone is chatting.
+    - type: prometheus
+      name: running
+      metadata:
+        serverAddress: {{ $v.scaling.prometheusUrl }}
+        query: sum(vllm:num_requests_running) or vector(0)
+        threshold: {{ $v.scaling.runningPerReplica | quote }}
+        activationThreshold: "0"
