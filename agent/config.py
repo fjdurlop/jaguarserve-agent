@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     handoff_webhook_url: str = ""
     cors_origins: str = ""
     session_ttl_minutes: int = 60
+    redis_url: str = ""  # empty: sessions and rate limits in memory (one replica only)
     rate_chat_per_min_ip: int = 30
     rate_chat_per_min_session: int = 15
     rate_book_per_hour_session: int = 3

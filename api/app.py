@@ -25,8 +25,8 @@ from agent.embeddings import get_embedder
 from agent.llm import OpenAICompatLLM
 from agent.loop import Deps, Event, chat_turn, confirm_booking
 from agent.search import WebSearch
-from agent.session import Sessions
-from api.ratelimit import RateLimiter
+from agent.session import MemorySessions, RedisSessions, Session, SessionStore, get_or_create
+from api.ratelimit import RateLimiter, RedisRateLimiter
 
 log = logging.getLogger("api")
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -110,12 +110,18 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
             app.state.deps = deps
         app.state.pool = pool
         yield
+        await app.state.sessions.close()
         if pool is not None:
             pool.close()
 
     app = FastAPI(title="jaguarserve-agent", lifespan=lifespan, docs_url=None, redoc_url=None)
-    app.state.sessions = Sessions(s.session_ttl_minutes)
-    app.state.limits = RateLimiter()
+    lock_ttl = s.llm_ready_timeout + 300  # longest turn: cold start + tool loop
+    if s.redis_url:
+        sessions = RedisSessions.from_url(s.redis_url, ttl_minutes=s.session_ttl_minutes, lock_ttl_s=lock_ttl)
+        app.state.sessions, app.state.limits = sessions, RedisRateLimiter(sessions.r)
+    else:
+        app.state.sessions = MemorySessions(s.session_ttl_minutes, lock_ttl)
+        app.state.limits = RateLimiter()
     if s.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -132,8 +138,8 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
             return "internal"
         raise HTTPException(401, "invalid token")
 
-    def limit(key: str, n: int, window: float) -> None:
-        wait = app.state.limits.check(key, n, window)
+    async def limit(key: str, n: int, window: float) -> None:
+        wait = await app.state.limits.check(key, n, window)
         if wait:
             raise HTTPException(429, "rate limited", headers={"Retry-After": str(int(wait) + 1)})
 
@@ -141,23 +147,26 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
     async def chat(body: ChatIn, request: Request, authorization: str | None = Header(default=None)):
         role = role_of(authorization)
         ip = request.client.host if request.client else "unknown"
-        limit(f"ip:{ip}", s.rate_chat_per_min_ip, 60)
+        await limit(f"ip:{ip}", s.rate_chat_per_min_ip, 60)
         if not body.confirm and not (body.message and body.message.strip()):
             raise HTTPException(422, "message or confirm required")
-        session = app.state.sessions.get_or_create(body.session_id, role)
-        limit(f"session:{session.id}", s.rate_chat_per_min_session, 60)
+        store: SessionStore = app.state.sessions
+        session = await get_or_create(store, body.session_id, role)
+        await limit(f"session:{session.id}", s.rate_chat_per_min_session, 60)
         if body.confirm:
             if body.confirm.confirm:
-                limit(f"book:{session.id}", s.rate_book_per_hour_session, 3600)
-                limit(f"book-ip:{ip}", s.rate_book_per_hour_session * 3, 3600)
+                await limit(f"book:{session.id}", s.rate_book_per_hour_session, 3600)
+                await limit(f"book-ip:{ip}", s.rate_book_per_hour_session * 3, 3600)
             if body.session_id != session.id:
                 raise HTTPException(409, "session expired; start again")
-        if session.lock.locked():
+        token = await store.try_lock(session.id)
+        if token is None:
             raise HTTPException(409, "a reply is still in progress for this session")
+        session = await store.get(session.id) or session  # fresh copy: another replica may have saved it
         d: Deps = app.state.deps
 
         async def events() -> AsyncIterator[Event]:
-            async with session.lock:
+            try:
                 yield Event("session", {"session_id": session.id, "role": session.role})
                 if body.confirm:
                     gen = confirm_booking(
@@ -171,6 +180,9 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
                     gen = chat_turn(session, d, body.message.strip())
                 async for ev in gen:
                     yield ev
+            finally:
+                await store.save(session)
+                await store.unlock(session.id, token)
 
         if not body.stream:
             collected: dict = {"events": []}
@@ -193,11 +205,11 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    def own_appointment(appt_id: str, session_id: str | None):
-        session = app.state.sessions.get(session_id or "")
+    async def own_appointment(appt_id: str, session_id: str | None):
+        session: Session | None = await app.state.sessions.get(session_id) if session_id else None
         if session is None or appt_id not in session.bookings:
             raise HTTPException(404, "not found")
-        appt = app.state.deps.calendar.get(appt_id)
+        appt = await asyncio.to_thread(app.state.deps.calendar.get, appt_id)
         if appt is None:
             raise HTTPException(404, "not found")
         return appt
@@ -207,17 +219,17 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
 
     @app.get("/v1/appointments/{appt_id}")
     async def get_appointment(appt_id: str, x_session_id: str | None = Header(default=None)):
-        return view(await asyncio.to_thread(own_appointment, appt_id, x_session_id))
+        return view(await own_appointment(appt_id, x_session_id))
 
     @app.post("/v1/appointments/{appt_id}/cancel")
     async def cancel_appointment(appt_id: str, x_session_id: str | None = Header(default=None)):
-        await asyncio.to_thread(own_appointment, appt_id, x_session_id)
+        await own_appointment(appt_id, x_session_id)
         return view(await asyncio.to_thread(app.state.deps.calendar.cancel, appt_id))
 
     @app.post("/v1/handoff", status_code=202)
     async def handoff(body: HandoffIn, request: Request):
-        limit(f"handoff:{request.client.host if request.client else 'x'}", 5, 3600)
-        session = app.state.sessions.get(body.session_id)
+        await limit(f"handoff:{request.client.host if request.client else 'x'}", 5, 3600)
+        session = await app.state.sessions.get(body.session_id)
         if session is None:
             raise HTTPException(404, "session not found")
         payload = {
@@ -240,7 +252,7 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
 
     @app.post("/v1/feedback", status_code=204)
     async def feedback(body: FeedbackIn):
-        if body.rating == 0 or app.state.sessions.get(body.session_id) is None:
+        if body.rating == 0 or await app.state.sessions.get(body.session_id) is None:
             raise HTTPException(422, "rating must be -1 or 1 for an active session")
         pool = app.state.pool
         if pool is not None:
@@ -270,6 +282,8 @@ def create_app(settings: Settings | None = None, deps: Deps | None = None) -> Fa
     @app.get("/readyz")
     async def readyz():  # does not depend on the LLM: the GPU may be scaled to zero
         ok = await asyncio.to_thread(app.state.deps.store.ping)
+        if ok and isinstance(app.state.sessions, RedisSessions):
+            ok = await app.state.sessions.ping()
         return JSONResponse({"ok": ok}, status_code=200 if ok else 503)
 
     @app.get("/metrics")

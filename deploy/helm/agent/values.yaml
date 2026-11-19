@@ -1,0 +1,71 @@
+# Secret with LLM_API_KEY, POSTGRES_PASSWORD, INTERNAL_TOKENS (created by `make secrets`, never in Git).
+secretName: agent-secrets
+
+api:
+  image:
+    repository: ""        # required: ECR repo from the bootstrap stack
+    tag: dev
+    pullPolicy: IfNotPresent
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    cpuUtilization: 70
+  resources:
+    requests: {cpu: 250m, memory: 768Mi}
+    limits: {memory: 1536Mi}
+  env:
+    EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    SEARCH_PROVIDER: fake
+    SEARCH_ALLOW_LIST: example.org,example.com
+    TIMEZONE: UTC
+    # Cold start from zero (GPU node + image pull + weights) must fit inside this wait.
+    LLM_READY_TIMEOUT: "900"
+  terminationGracePeriodSeconds: 300   # longer than the longest streamed turn
+
+ingress:
+  enabled: false          # needs enable_alb = true in Terraform
+  host: ""                # empty: any host (ALB DNS name)
+  certificateArn: ""      # ACM certificate -> HTTPS 443 + redirect; empty -> HTTP 80 only (lab)
+  idleTimeoutSeconds: 900 # SSE streams stay open while the GPU warms up
+
+redis:
+  image: redis:7.4-alpine
+  maxmemory: 128mb
+
+postgres:
+  image: pgvector/pgvector:pg16
+  storage: 5Gi
+
+ingest:
+  enabled: true           # post-install/upgrade Job: load data/demo_catalog into Postgres
+  path: data/demo_catalog
+
+vllm:
+  image: vllm/vllm-openai:v0.33.0
+  model: Qwen/Qwen3-14B-AWQ       # served name; agent LLM_MODEL uses the same
+  weightsS3Uri: ""                # s3://<models bucket>/Qwen3-14B-AWQ ; empty -> download from the Hub
+  awsCliImage: amazon/aws-cli:2.27.61
+  args:
+    - --quantization=awq_marlin
+    - --max-model-len=16384
+    - --gpu-memory-utilization=0.90
+    - --enable-auto-tool-choice
+    - --tool-call-parser=hermes
+    - --enable-prefix-caching
+  resources:
+    requests: {cpu: "2", memory: 12Gi, nvidia.com/gpu: 1}
+    limits: {memory: 14Gi, nvidia.com/gpu: 1}
+  startupMinutes: 25
+  rolloutStrategy: RollingUpdate  # or Recreate (lab.sh sets it: one GPU, see deploy/KNOWN_ISSUES.md #3)
+  scaling:
+    maxReplicas: 3                  # = Karpenter gpuLimit
+    cooldownSeconds: 1800           # to zero 30 min after the last request
+    waitingPerReplica: "2"          # vllm:num_requests_waiting per replica before adding one
+    runningPerReplica: "8"          # vllm:num_requests_running per replica (measure, Phase 7)
+    prometheusUrl: http://prometheus-server.monitoring.svc
+    fallbackReplicas: 0             # replicas if Prometheus is down (0 = keep current; lab budget)
+
+weightsSync:
+  enabled: false          # one-off Job: Hub -> S3 (make weights)
+  pythonImage: python:3.12-slim
